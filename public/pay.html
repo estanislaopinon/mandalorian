@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pagar Capítulo - The Mandalorian</title>
+    <link rel="stylesheet" href="styles.css" />
+    <!-- Reutilizamos el mismo CSS -->
+  </head>
+  <body>
+    <h1>Pagar Capítulo</h1>
+    <div class="payment-form">
+      <h3 id="episode-title">Cargando...</h3>
+      <form id="payment-form">
+        <label for="amount">Monto a pagar ($):</label>
+        <input
+          type="number"
+          id="amount"
+          name="amount"
+          min="1"
+          step="0.01"
+          required
+        />
+        <button type="submit">Confirmar Pago</button>
+      </form>
+      <a href="/">Volver a la lista de capítulos</a>
+    </div>
+    <script src="pay.js"></script>
+  </body>
+</html>
