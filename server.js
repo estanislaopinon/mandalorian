@@ -3,12 +3,18 @@ const redis = require("redis");
 const app = express();
 const port = 3000;
 
-// Conectar a Redis
-const client = redis.createClient({ url: "redis://localhost:6379" });
+// Conectar a Redis (apuntando al contenedor redis-mandalorian mapeado a localhost)
+const client = redis.createClient({
+  url: "redis://localhost:6379",
+});
 client.on("error", (err) => console.log("Redis Client Error", err));
 (async () => {
-  await client.connect();
-  console.log("Conectado a Redis");
+  try {
+    await client.connect();
+    console.log("Conectado a Redis (redis-mandalorian)");
+  } catch (err) {
+    console.error("Error al conectar a Redis:", err);
+  }
 })();
 
 // Middleware
@@ -211,84 +217,185 @@ const mandalorianEpisodes = [
   },
 ];
 
-// Inicializar capítulos en Redis (forzar carga para pruebas)
+// Inicializar capítulos en Redis usando hashes
 async function initializeEpisodes() {
-  await client.set("episodes", JSON.stringify(mandalorianEpisodes));
-  console.log("Capítulos de The Mandalorian cargados en Redis con imágenes");
+  try {
+    // Verificar si ya existen episodios en Redis
+    const existingKeys = await client.keys("episode:*");
+    if (existingKeys.length === 0) {
+      for (const episode of mandalorianEpisodes) {
+        const episodeKey = `episode:${episode.id}`;
+        await client.hSet(episodeKey, {
+          id: episode.id.toString(), // Convertimos a string para Redis
+          title: episode.title,
+          status: episode.status,
+          reservedUntil: episode.reservedUntil
+            ? episode.reservedUntil.toString()
+            : "",
+          rentedUntil: episode.rentedUntil
+            ? episode.rentedUntil.toString()
+            : "",
+          image: episode.image,
+        });
+        console.log(
+          `Capítulo ${episode.id} - ${episode.title} cargado en redis-mandalorian como hash`
+        );
+      }
+      console.log(
+        "Todos los capítulos de The Mandalorian cargados en redis-mandalorian"
+      );
+    } else {
+      console.log("Los episodios ya estaban cargados en redis-mandalorian");
+    }
+  } catch (err) {
+    console.error("Error al inicializar episodios en Redis:", err);
+  }
+}
+
+// Función auxiliar para obtener todos los episodios desde Redis
+async function getAllEpisodes() {
+  const episodeKeys = await client.keys("episode:*");
+  const episodes = [];
+  for (const key of episodeKeys) {
+    const episodeData = await client.hGetAll(key);
+    episodes.push({
+      id: parseInt(episodeData.id),
+      title: episodeData.title,
+      status: episodeData.status,
+      reservedUntil: episodeData.reservedUntil
+        ? parseInt(episodeData.reservedUntil)
+        : null,
+      rentedUntil: episodeData.rentedUntil
+        ? parseInt(episodeData.rentedUntil)
+        : null,
+      image: episodeData.image,
+    });
+  }
+  return episodes.sort((a, b) => a.id - b.id); // Ordenar por ID
 }
 
 // Ruta para listar capítulos
 app.get("/api/episodes", async (req, res) => {
-  const currentTime = Date.now();
-  let episodes = JSON.parse(await client.get("episodes"));
+  try {
+    const currentTime = Date.now();
+    let episodes = await getAllEpisodes();
 
-  episodes = episodes.map((episode) => {
-    if (
-      episode.status === "reservado" &&
-      episode.reservedUntil &&
-      episode.reservedUntil < currentTime
-    ) {
-      episode.status = "disponible";
-      episode.reservedUntil = null;
+    // Actualizar estado de episodios reservados si el tiempo expiró
+    for (const episode of episodes) {
+      if (
+        episode.status === "reservado" &&
+        episode.reservedUntil &&
+        episode.reservedUntil < currentTime
+      ) {
+        episode.status = "disponible";
+        episode.reservedUntil = null;
+        await client.hSet(`episode:${episode.id}`, {
+          status: episode.status,
+          reservedUntil: "",
+        });
+      }
     }
-    return episode;
-  });
 
-  await client.set("episodes", JSON.stringify(episodes));
-  res.json(episodes);
+    res.json(episodes);
+  } catch (err) {
+    console.error("Error al listar episodios:", err);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
 });
 
-// Nueva ruta para obtener un episodio específico por ID
+// Ruta para obtener un episodio específico por ID
 app.get("/api/episodes/:id", async (req, res) => {
-  const episodeId = parseInt(req.params.id);
-  const episodes = JSON.parse(await client.get("episodes"));
-  const episode = episodes.find((ep) => ep.id === episodeId);
+  try {
+    const episodeId = parseInt(req.params.id);
+    const episodeKey = `episode:${episodeId}`;
+    const episodeData = await client.hGetAll(episodeKey);
 
-  if (!episode) {
-    return res.status(404).json({ error: "Capítulo no encontrado" });
+    if (!episodeData || Object.keys(episodeData).length === 0) {
+      return res.status(404).json({ error: "Capítulo no encontrado" });
+    }
+
+    const episode = {
+      id: parseInt(episodeData.id),
+      title: episodeData.title,
+      status: episodeData.status,
+      reservedUntil: episodeData.reservedUntil
+        ? parseInt(episodeData.reservedUntil)
+        : null,
+      rentedUntil: episodeData.rentedUntil
+        ? parseInt(episodeData.rentedUntil)
+        : null,
+      image: episodeData.image,
+    };
+
+    res.json(episode);
+  } catch (err) {
+    console.error("Error al obtener episodio:", err);
+    res.status(500).json({ error: "Error interno del servidor" });
   }
-
-  res.json(episode);
 });
 
 // Ruta para reservar un capítulo
 app.post("/api/reserve/:id", async (req, res) => {
-  const episodeId = parseInt(req.params.id);
-  let episodes = JSON.parse(await client.get("episodes"));
-  const episode = episodes.find((ep) => ep.id === episodeId);
+  try {
+    const episodeId = parseInt(req.params.id);
+    const episodeKey = `episode:${episodeId}`;
+    const episodeData = await client.hGetAll(episodeKey);
 
-  if (!episode)
-    return res.status(404).json({ error: "Capítulo no encontrado" });
-  if (episode.status !== "disponible")
-    return res.status(400).json({ error: "Capítulo no disponible" });
+    if (!episodeData || Object.keys(episodeData).length === 0) {
+      return res.status(404).json({ error: "Capítulo no encontrado" });
+    }
 
-  episode.status = "reservado";
-  episode.reservedUntil = Date.now() + 4 * 60 * 1000;
-  await client.set("episodes", JSON.stringify(episodes));
-  res.json({ message: `Capítulo ${episodeId} reservado por 4 minutos` });
+    if (episodeData.status !== "disponible") {
+      return res.status(400).json({ error: "Capítulo no disponible" });
+    }
+
+    const reservedUntil = Date.now() + 4 * 60 * 1000;
+    await client.hSet(episodeKey, {
+      status: "reservado",
+      reservedUntil: reservedUntil.toString(),
+    });
+
+    res.json({ message: `Capítulo ${episodeId} reservado por 4 minutos` });
+  } catch (err) {
+    console.error("Error al reservar episodio:", err);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
 });
 
 // Ruta para confirmar el pago
 app.post("/api/confirm/:id", async (req, res) => {
-  const episodeId = parseInt(req.params.id);
-  const { price } = req.body;
-  let episodes = JSON.parse(await client.get("episodes"));
-  const episode = episodes.find((ep) => ep.id === episodeId);
+  try {
+    const episodeId = parseInt(req.params.id);
+    const { price } = req.body;
+    const episodeKey = `episode:${episodeId}`;
+    const episodeData = await client.hGetAll(episodeKey);
 
-  if (!episode)
-    return res.status(404).json({ error: "Capítulo no encontrado" });
-  if (episode.status !== "reservado")
-    return res.status(400).json({ error: "El capítulo no está reservado" });
-  if (!price || price <= 0)
-    return res.status(400).json({ error: "Precio inválido" });
+    if (!episodeData || Object.keys(episodeData).length === 0) {
+      return res.status(404).json({ error: "Capítulo no encontrado" });
+    }
 
-  episode.status = "alquilado";
-  episode.reservedUntil = null;
-  episode.rentedUntil = Date.now() + 24 * 60 * 60 * 1000;
-  await client.set("episodes", JSON.stringify(episodes));
-  res.json({
-    message: `Pago confirmado para el capítulo ${episodeId}. Alquilado por 24 horas.`,
-  });
+    if (episodeData.status !== "reservado") {
+      return res.status(400).json({ error: "El capítulo no está reservado" });
+    }
+
+    if (!price || price <= 0) {
+      return res.status(400).json({ error: "Precio inválido" });
+    }
+
+    const rentedUntil = Date.now() + 24 * 60 * 60 * 1000;
+    await client.hSet(episodeKey, {
+      status: "alquilado",
+      reservedUntil: "",
+      rentedUntil: rentedUntil.toString(),
+    });
+
+    res.json({
+      message: `Pago confirmado para el capítulo ${episodeId}. Alquilado por 24 horas.`,
+    });
+  } catch (err) {
+    console.error("Error al confirmar pago:", err);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
 });
 
 // Iniciar servidor y cargar episodios
