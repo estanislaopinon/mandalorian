@@ -3,15 +3,15 @@ const redis = require("redis");
 const app = express();
 const port = 3000;
 
-// Conectar a Redis (apuntando al contenedor redis-mandalorian mapeado a localhost)
+// Conectar a Redis usando la variable de entorno REDIS_URL
 const client = redis.createClient({
-  url: "redis://localhost:6379",
+  url: process.env.REDIS_URL || "redis://localhost:6379", // Fallback para desarrollo local
 });
 client.on("error", (err) => console.log("Redis Client Error", err));
 (async () => {
   try {
     await client.connect();
-    console.log("Conectado a Redis (redis-mandalorian)");
+    console.log("Conectado a Redis");
   } catch (err) {
     console.error("Error al conectar a Redis:", err);
   }
@@ -238,14 +238,12 @@ async function initializeEpisodes() {
           image: episode.image,
         });
         console.log(
-          `Capítulo ${episode.id} - ${episode.title} cargado en redis-mandalorian como hash`
+          `Capítulo ${episode.id} - ${episode.title} cargado en Redis como hash`
         );
       }
-      console.log(
-        "Todos los capítulos de The Mandalorian cargados en redis-mandalorian"
-      );
+      console.log("Todos los capítulos de The Mandalorian cargados en Redis");
     } else {
-      console.log("Los episodios ya estaban cargados en redis-mandalorian");
+      console.log("Los episodios ya estaban cargados en Redis");
     }
   } catch (err) {
     console.error("Error al inicializar episodios en Redis:", err);

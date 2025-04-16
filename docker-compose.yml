@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    networks:
+      - mandalorian-network
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    networks:
+      - mandalorian-network
+
+volumes:
+  redisdata:
+
+networks:
+  mandalorian-network:
+    driver: bridge
